@@ -10,15 +10,32 @@ for seq in object:
 print(__name__)
 
 import numpy as np
+import matplotlib.pyplot as plt
+x = np.arange(0.1, 4, 0.5)
+y = np.exp(-x)
+x_1 = np.array([0, 1, 2])
+y_1 = np.array([3, 5, 10])
+yerr = 0.1 + 0.2*np.sqrt(x)
+xerr = 0.1 + yerr
+plt.figure()
+plt.errorbar(x, y, xerr=0.2, yerr=0.4,fmt = 'o', label='Randomized results with error bars')
+plt.plot(x_1, y_1, 'ro',label='Significant intervals')
+plt.title("Simplest errorbars, 0.2 in x, 0.4 in y")
+plt.legend(bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.)
+plt.savefig('data/plot.pdf', format='pdf')
+plt.show()
+
 
 
 A = np.array([1, 2, 3])
 B = np.array([3, 4, 5])
 np.subtract.outer(A, B)
 
-mymatrix = np.array([[11,12,13],
-                      [21,22,23],
-                      [31,32,33]])
+mymatrix = np.array([[11, 12, 13],
+                      [21, 22, 23],
+                      [31, 32, 33]])
+
+a,b = mymatrix[[0, 1],]
 
 mymatrix[((1, 2), (1,1))]
 

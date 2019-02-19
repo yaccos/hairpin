@@ -7,6 +7,7 @@ import Bio.Alphabet
 import numpy as np
 import scipy.stats
 import click
+import matplotlib.pyplot as plt
 
 
 
@@ -178,13 +179,16 @@ class RandomizationResult:
         self.std_error_matched_bases = np.std(result_matrix, axis=0)
         self.max_length = max_length
 
+    def __len__(self):
+        return self.mean_matched_bases.size
+
     def compare(self, match_result: MatchResult, len_sequence: int, p_crit: int = 0.05):
         # Finds the motif intervals to consider
         length_of_interval = np.subtract.outer(match_result.start_position, match_result.end_position)
         # Finds the feasable intervals
         intervals_to_consider = np.nonzero(np.min(match_result.motif_length) <= length_of_interval <= self.max_length)
-        interval_indecies = np.transpose(intervals_to_consider)
-        interval_list = map(lambda x: x, interval_indecies)
+        interval_indices = np.transpose(intervals_to_consider)
+        interval_list = map(lambda x: x, interval_indices)
         n_matched_bases_in_intervals = np.array(map(lambda start, end:
                                                     match_result.count_matched_bases(start_motif=start, end_motif=end),
                                                     interval_list))
@@ -193,11 +197,47 @@ class RandomizationResult:
                                   - self.mean_matched_bases[length_of_intervals_to_consider]) / \
                                  self.std_error_matched_bases[length_of_intervals_to_consider]
         p_values_for_intervals = 1 - scipy.stats.norm.cdf(z_values_for_intervals)
-        correced_p_values_for_intervals = np.power(p_values_for_intervals,
+        corrected_p_values_for_intervals = np.power(p_values_for_intervals,
                                                    length_of_intervals_to_consider / len_sequence)
-        significant_intervals = np.nonzero(correced_p_values_for_intervals < p_crit)
+        significant_intervals = np.nonzero(corrected_p_values_for_intervals < p_crit)
+        start_motif, end_motif = interval_indices[significant_intervals,:]
+        start_nucleotide = match_result.start_position(start_motif)
+        end_nucleotide = match_result.end_position(end_motif)
+        p_values = corrected_p_values_for_intervals[significant_intervals]
+        p_values_order = np.argsort(p_values)
 
+        res = IntervalResult(randomized_result=self)
+        # Removes the overlaps, starting with the most significant interval
+        # Indecies relative to the array significant_intervals
+        discard = np.zeros(shape=significant_intervals.size, dtype=np.bool_)
+        for i in range(significant_intervals.size):
+            this_index = p_values_order[i]
+            if discard[this_index]:
+                continue
+            # Adds the interval to the results
+            res.add(start_nucleotide=start_nucleotide[this_index], end_nucleotide=end_nucleotide[this_index],
+                    p_value = p_values[this_index],
+                    n_matched_bases=n_matched_bases_in_intervals[this_index])
+            discard[(start_nucleotide >= start_nucleotide[this_index]) *
+                    (end_nucleotide <= end_nucleotide[this_index])] = True
+        return res
 
+class IntervalResult:
+    def __init__(self, randomized_result: RandomizationResult):
+        self.start_nucleotide = []
+        self.end_nucleotide = []
+        self.p_value = []
+        self.n_matched_bases = []
+        self.randomized_result = randomized_result
+
+    def add(self, start_nucleotide, end_nucleotide, p_value, n_matched_bases):
+        self.start_nucleotide.apppend(start_nucleotide)
+        self.end_nucleotide.append(end_nucleotide)
+        self.p_value.append(p_value)
+        self.n_matched_bases.append(n_matched_bases)
+
+    def __len__(self):
+        return len(self.start_nucleotide)
 
 
 def compute_randomized_structures(transcript: Bio.SeqRecord.SeqRecord, n_randomizations: int, min_window: int,
@@ -223,14 +263,55 @@ def compute_randomized_structures(transcript: Bio.SeqRecord.SeqRecord, n_randomi
     return RandomizationResult(result_matrix=res_combined, len_sequence = len(transcript), max_length=max_length)
 
 
-def predict_RNA_genes(sequence, n_randomizations, min_window, max_window, max_length, p_crit, min_motif_length):
+def predict_RNA_genes(sequence, n_randomizations: int, min_window: int, max_window: int, max_length: int , p_crit: float, min_motif_length) \
+        -> IntervalResult:
     sequence = sequence.upper()
     transcript = sequence.upper()
     randomized_results = compute_randomized_structures(transcript, n_randomizations, min_window,
                                                        max_window, max_length, min_motif_length)
     actual_results = find_hairpins(transcript, min_window, max_window, max_length, min_motif_length)
 
-    return randomized_results.compare(actual_results, p_crit=p_cript)
+    return randomized_results.compare(actual_results, p_crit=p_crit, len_sequence=len(sequence))
+
+
+def write_results(results: IntervalResult, chrom: str, chromStart: int, res_prefix: str)-> None:
+    # Creating *.bed file
+    bed_name = res_prefix + 'track' + '.bed'
+    with open(bed_name, mode='w') as f:
+        header_line = "chrom\tchromStart\tchromEnd\tp_value \t n_matched_bases\n"
+        f.write(header_line)
+        for i in range(len(results)):
+            this_chromStart = results.start_nucleotide[i]+chromStart
+            this_chromEnd = results.end_nucleotide[i]+chromStart
+            this_p_value = results.p_value[i]
+            this_n_matched_bases = results.n_matched_bases[i]
+            bed_line = "{0}\t{1}\t{2}\t{3}\t{4}\n".format(chrom, this_chromStart, this_chromEnd,
+                                                   this_p_value, this_n_matched_bases)
+            f.write(bed_line)
+    rand_name = res_prefix + 'randomized_results' + '.txt'
+    with open(rand_name, mode='w') as f:
+        header_line "Length_of_interval\tmean_matched_bases\tstd_matched_bases\n"
+        f.write(header_line)
+        for i in range(len(results.randomized_result)):
+            rand_line = "{0}\t{1}\t{2}\n".format(i, results.randomized_result.mean_matched_bases[i],
+                                               results.randomized_result.std_error_matched_bases[i])
+            f.write(rand_line)
+    plot_name = res_prefix + 'plot' + '.pdf'
+    plt.figure()
+    plt.errorbar(x=range(len(results.randomized_result)), y= results.randomized_result.mean_matched_bases,
+                 yerr=results.randomized_result.std_error_matched_bases, label='Randomized sequences')
+    plt.plot(np.array(results.end_nucleotide)-np.array(results.start_nucleotide),
+             results.n_matched_bases, label='Real intervals reported')
+    plt.xlabel('Length of interval')
+    plt.ylabel('Number of matched bases in interval')
+    plt.title('Comparison of the significant intervals found to the randomized results')
+    plt.savefig(plot_name, format='pdf')
+
+
+
+
+
+
 
 
 @click.command()
@@ -243,16 +324,20 @@ def predict_RNA_genes(sequence, n_randomizations, min_window, max_window, max_le
 @click.option('--min_motif_length', default=4,
               help='The minimum number of consecutive base parings necessary to take such a motif into '
                    'consideration')
+@click.option('--chrom', default='chr', help='String representation of chromosome name (such as chr10)')
+@click.option('--chromStart', default=0, help='Start position of the sequence at the chromosome')
 @click.option('--p_crit', default=0.05, help='Critical p-value for the results')
-def main(INFILE, min_window, n_randomizations, max_window, max_length, p_crit, min_motif_length):
+@click.option('--res_prefix', default='', help='Prefix for the output files')
+def main(INFILE, min_window, n_randomizations, max_window, max_length, p_crit, min_motif_length,
+         chrom, chromStart,res_prefix):
     """
     :param INFILE: The filename (FASTA format) of the coding DNA strand being used to predict the RNA genes.
     """
-    sequences = Bio.SeqIO.parse(infile, 'fasta', alphabet=Bio.Alphabet.generic_dna)
-    results = [predict_RNA_genes(sequence, n_randomizations=n_randomizations, min_window=min_window,
+    sequence = Bio.SeqIO.read(INFILE, 'fasta', alphabet=Bio.Alphabet.generic_dna)
+    results = predict_RNA_genes(sequence, n_randomizations=n_randomizations, min_window=min_window,
                                  max_window=max_window,
                                  max_length=max_length, p_crit=p_crit, min_motif_length=min_motif_length)
-               for sequence in sequences]
+    write_results(results=results, chrom=chrom, chromStart=chromStart, res_prefix=res_prefix)
 
 
 if __name__ == '__main__':

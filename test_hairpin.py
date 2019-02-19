@@ -1,6 +1,9 @@
 import hairpin
 import Bio.Seq
+import Bio.SeqIO
 import numpy as np
+
+seq = Bio.SeqIO.read("data/sequence.fasta", format='fasta')
 
 t=Bio.Seq.Seq('ACUGG')
 
