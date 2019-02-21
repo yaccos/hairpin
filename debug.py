@@ -1,7 +1,7 @@
 import hairpin
 import Bio.SeqIO
 import numpy as np
-infile = 'data/e_coli_short.fasta'
+infile = 'data/e_coli_intermediate.fasta'
 min_window = 4
 n_randomizations = 30
 max_window = 20

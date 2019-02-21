@@ -3,3 +3,4 @@ Biopython>=1.68
 click>=7.0
 scipy>=0.17.0
 matplotlib>=1.5.3
+joblib>=0.13.2

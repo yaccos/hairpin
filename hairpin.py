@@ -8,6 +8,7 @@ import Bio.Alphabet
 import numpy as np
 import scipy.stats
 import click
+import joblib
 import matplotlib.pyplot as plt
 
 
@@ -129,7 +130,7 @@ class MatchResult:
         return count
 
 
-def extract_match_results(parity_match_matrix, max_window):
+def extract_match_results(parity_match_matrix, max_window, min_motif_length=4):
     n_row = parity_match_matrix.shape[0]
     n_col = parity_match_matrix.shape[1]
     # Preallocates the arrays storing the results
@@ -142,14 +143,16 @@ def extract_match_results(parity_match_matrix, max_window):
         start_window = max_window
         this_match_diagonal = np.diagonal(parity_match_matrix, col)
         start_position[col], motif_length[col], end_position[col] = \
-            MatchSequence(this_match_diagonal, start_nucleotide, start_window).find_significant_motifs()
+            MatchSequence(this_match_diagonal, start_nucleotide,
+                          start_window, min_motif_length=min_motif_length).find_significant_motifs()
     # Extracts the diagonals below the main diagonal
     for row in range(1, n_row):
         start_nucleotide = 0
         start_window = max_window - 2 * row
         this_match_diagonal = np.diagonal(parity_match_matrix, -row)
         start_position[n_col + row - 1], motif_length[n_col + row - 1], end_position[n_col + row - 1] = \
-            MatchSequence(this_match_diagonal, start_nucleotide, start_window).find_significant_motifs()
+            MatchSequence(this_match_diagonal, start_nucleotide,
+                          start_window, min_motif_length=min_motif_length).find_significant_motifs()
     # Collapses the results for all result arrays
     start_position = np.concatenate(start_position)
     motif_length = np.concatenate(motif_length)
@@ -157,9 +160,16 @@ def extract_match_results(parity_match_matrix, max_window):
     return start_position, motif_length, end_position
 
 
-def find_hairpins(np_transcript: np.ndarray, min_window, max_window, min_motif_length) -> MatchResult:
+def find_hairpins(np_transcript: np.ndarray, min_window: int, max_window: int, min_motif_length: int,
+                  parallel: bool = True) -> MatchResult:
     # Finds basepair matches for each distance. The first basepair in the match will be reported as TRUE
-    matches = [find_matches(np_transcript, window_size=window_size) for window_size in range(min_window, max_window + 1)]
+    if parallel:
+        matches = joblib.Parallel(n_jobs=joblib.cpu_count())(joblib.delayed(find_matches)
+                                  (np_transcript, window_size=window_size)
+                                  for window_size in range(min_window, max_window + 1))
+    else:
+        matches = [find_matches(np_transcript, window_size=window_size)
+                   for window_size in range(min_window, max_window + 1)]
     # Finds out which window size which are even
     is_even_window = np.array(range(min_window, max_window + 1)) % 2 == 0
     # Constructs a matrix of the matches and reverses the window sizes
@@ -170,9 +180,11 @@ def find_hairpins(np_transcript: np.ndarray, min_window, max_window, min_motif_l
     max_even_window = max_window if max_window % 2 == 0 else max_window - 1
     max_odd_window = max_window if max_window % 2 != 0 else max_window - 1
     even_start_position, even_match_length, even_end_position = extract_match_results(even_match_matrix,
-                                                                                      max_even_window)
+                                                                                      max_even_window,
+                                                                                      min_motif_length=min_motif_length)
     odd_start_position, odd_match_length, odd_end_position = extract_match_results(odd_match_matrix,
-                                                                                   max_odd_window)
+                                                                                   max_odd_window,
+                                                                                   min_motif_length=min_motif_length)
     start_position = np.concatenate([even_start_position, odd_start_position])
     match_length = np.concatenate([even_match_length, odd_match_length])
     end_position = np.concatenate([even_end_position, odd_end_position])
@@ -197,10 +209,10 @@ class RandomizationResult:
                                                           length_of_interval <= self.max_length))
         interval_indices = np.transpose(intervals_to_consider)
         interval_list = map(lambda x: x, interval_indices)
-        n_matched_bases_in_intervals_list = list(map(lambda interval:
+        n_matched_bases_in_intervals_list = joblib.Parallel(n_jobs=joblib.cpu_count())(joblib.delayed(lambda interval:
                                                      match_result.count_matched_bases(start_motif=interval[1],
-                                                                                      end_motif=interval[0]),
-                                                     interval_list))
+                                                                                      end_motif=interval[0]))(interval)
+                                                     for interval in interval_list)
         n_matched_bases_in_intervals = np.array(n_matched_bases_in_intervals_list)
         length_of_intervals_to_consider = length_of_interval[intervals_to_consider]
         z_values_for_intervals = (n_matched_bases_in_intervals
@@ -260,24 +272,29 @@ def compute_randomized_structures(transcript: Bio.Seq.Seq, n_randomizations: int
                                   max_length: int, min_motif_length: int):
     raw_weights = np.array([transcript.count('A'), transcript.count('C'), transcript.count('G'), transcript.count('U')])
     weights = raw_weights / np.sum(raw_weights)
-    res = [None for _ in range(n_randomizations)]
 
     def counting_wrapper(np_transcript, min_window, max_window, min_motif_length):
         motif_results = find_hairpins(np_transcript=np_transcript, min_window=min_window,
-                                      max_window=max_window, min_motif_length=min_motif_length)
+                                      max_window=max_window, min_motif_length=min_motif_length, parallel=False)
         if len(motif_results) == 0:
             return 0
         count = motif_results.count_matched_bases(start_motif=motif_results.order_start_position[0],
                                                   end_motif=motif_results.order_end_position[-1])
         return count
 
-    for i in range(n_randomizations):
+    def parallel_wrapper(seed):
+        np.random.seed(seed)
         # Creates a random sequence according to the original distribution in the transcript
         random_sequence = np.random.choice([b'A', b'C', b'G', b'U'], size=max_length, p=weights)
         matched_base_count = [counting_wrapper(np_transcript=random_sequence[:length], min_window=min_window,
                                                max_window=max_window, min_motif_length=min_motif_length)
                               for length in range(min_length, max_length + 1)]
-        res[i] = np.array(matched_base_count)
+        return np.array(matched_base_count)
+
+    seeds = np.random.randint(low=0, high=2**32-1, size=n_randomizations)
+    res = joblib.Parallel(n_jobs=joblib.cpu_count())(joblib.delayed(parallel_wrapper)(seeds[i])
+                                                     for i in range(n_randomizations))
+    # res = [parallel_wrapper(seeds[i]) for i in range(n_randomizations)]
     res_combined = np.vstack(res)
     return RandomizationResult(result_matrix=res_combined, min_length=min_length, max_length=max_length)
 
@@ -302,7 +319,7 @@ def predict_RNA_genes(sequence, n_randomizations: int, min_window: int, max_wind
 
 def write_results(results: IntervalResult, chrom: str, chromStart: int, res_prefix: str) -> None:
     # Creating *.bed file
-    bed_name = res_prefix + 'track' + '.bed'
+    bed_name = res_prefix + '_track' + '.bed' if res_prefix != '' else 'track.bed'
     results.p_value
     with open(bed_name, mode='w') as f:
         header_line = '''track\tname=hairpins_results\tdescription="RNA genes predicted by hairpin"\tuseName=1\n'''
@@ -315,7 +332,7 @@ def write_results(results: IntervalResult, chrom: str, chromStart: int, res_pref
             bed_line = '''{0}\t{1}\t{2}\t"p-value={3:.1e}"\n'''.format(chrom, this_chromStart, this_chromEnd,
                                                               this_p_value)
             f.write(bed_line)
-    rand_name = res_prefix + 'randomized_results' + '.txt'
+    rand_name = res_prefix + '_randomized_results' + '.txt' if res_prefix != '' else 'randomized_results.txt'
     with open(rand_name, mode='w') as f:
         header_line = "Length_of_interval\tmean_matched_bases\tstd_matched_bases\n"
         f.write(header_line)
@@ -324,7 +341,7 @@ def write_results(results: IntervalResult, chrom: str, chromStart: int, res_pref
                                                  results.randomized_result.mean_matched_bases[i],
                                                  results.randomized_result.std_error_matched_bases[i])
             f.write(rand_line)
-    plot_name = res_prefix + 'plot' + '.pdf'
+    plot_name = res_prefix + '_plot' + '.pdf' if res_prefix != '' else 'plot.pdf'
     plt.figure()
     plt.errorbar(x=range(results.randomized_result.min_length, results.randomized_result.max_length+1),
                  y=results.randomized_result.mean_matched_bases,
@@ -341,19 +358,21 @@ def write_results(results: IntervalResult, chrom: str, chromStart: int, res_pref
 @click.command()
 @click.argument(u'infile')
 @click.option('--n_randomizations', default=50, help="Number of randomizations used to assess the significance of the"
-                                                     " results")
-@click.option('--min_window', default=4, help='Minimal window searching for matching nucleotides')
-@click.option('--max_window', default=100, help='Maximal window searching for matching nucleotides')
-@click.option('--min_length', default=20, help='Minimal length of reported RNA coding regions')
-@click.option('--max_length', default=100, help='Maximal length of reported RNA coding regions')
+                                                     " results", show_default=True)
+@click.option('--min_window', default=4, help='Minimal window searching for matching nucleotides', show_default=True)
+@click.option('--max_window', default=100, help='Maximal window searching for matching nucleotides', show_default=True)
+@click.option('--min_length', default=20, help='Minimal length of reported RNA coding regions', show_default=True)
+@click.option('--max_length', default=100, help='Maximal length of reported RNA coding regions', show_default=True)
 @click.option('--min_motif_length', default=4,
               help='The minimum number of consecutive base parings necessary to take such a motif into '
-                   'consideration')
-@click.option('--chrom', default='chr', help='String representation of chromosome name (such as chr10)')
-@click.option('--chromStart', default=0, help='Start position of the sequence at the chromosome')
-@click.option('--p_crit', default=0.05, help='Critical p-value for the results')
-@click.option('--res_prefix', default='', help='Prefix for the output files')
-def main(infile, min_window=4, n_randomizations=50, max_window=100, min_length=20, max_length=100, p_crit=0.05, min_motif_length=4,
+                   'consideration', show_default=True)
+@click.option('--chrom', default='chr', help='String representation of chromosome name (such as chr10)',
+              show_default=True)
+@click.option('--chromStart', default=0, help='Start position of the sequence at the chromosome', show_default=True)
+@click.option('--p_crit', default=0.05, help='Critical p-value for the results', show_default=True)
+@click.option('--res_prefix', default='', help='Prefix for the output files', show_default=True)
+def main(infile, min_window=4, n_randomizations=50, max_window=100, min_length=20, max_length=100, p_crit=0.05,
+         min_motif_length=4,
          chrom='chr', chromstart=0, res_prefix=''):
     """
     :param INFILE: The filename (FASTA format) of the coding DNA strand being used to predict the RNA genes.

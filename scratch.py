@@ -2,6 +2,12 @@ import Bio.SeqIO
 import Bio.Seq
 import hairpin
 
+a = Bio.SeqIO.read('data/e_coli_short.fasta', 'fasta')
+b = Bio.SeqIO.read('data/e_coli_k_12.fasta', 'fasta')
+
+len(a.seq)
+len(b.seq)
+
 def counting_wrapper(transcript, min_window, max_window, min_motif_length):
     motif_results = hairpin.find_hairpins(transcript=transcript, min_window=min_window,
                                   max_window=max_window, min_motif_length=min_motif_length)
