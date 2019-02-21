@@ -1,5 +1,20 @@
 import Bio.SeqIO
 import Bio.Seq
+import hairpin
+
+def counting_wrapper(transcript, min_window, max_window, min_motif_length):
+    motif_results = hairpin.find_hairpins(transcript=transcript, min_window=min_window,
+                                  max_window=max_window, min_motif_length=min_motif_length)
+    if len(motif_results) == 0:
+        return 0
+    count = motif_results.count_matched_bases(start_motif=motif_results.order_start_position[0],
+                                              end_motif=motif_results.order_end_position[-1])
+    return count
+
+transcript = Bio.Seq.Seq('AAAAGCUUUUU')
+counting_wrapper(transcript=transcript,min_window=4,max_window=10,min_motif_length=4)
+
+
 object = Bio.SeqIO.parse('/Users/Jakob/Documents/OneDrive - NTNU/MOL3022/Project/hairpin/data/ls_orchid.fasta','fasta')
 
 for seq in object:
