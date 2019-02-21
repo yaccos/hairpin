@@ -16,7 +16,7 @@ The program is run from the command line using the syntax (example):
 ```bash
 python3 hairpin.py --n_randomizations 50 --min_window 4 --max_window 20 \
 --min_length 20 --max_length 100 --min_motif_length 4 --chrom 'chr' \
---chromStart 1000 --p_crit 0.05 --res_prefix 'my_results' e_coli_genome.fasta
+--chromStart 1000 --q_crit 0.05 --res_prefix 'my_results' e_coli_genome.fasta
 ```
 The arguments are described upon calling:
 

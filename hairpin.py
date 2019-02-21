@@ -10,7 +10,7 @@ import scipy.stats
 import click
 import joblib
 import matplotlib.pyplot as plt
-
+import statsmodels.stats.multitest
 
 
 def find_matches(np_transcript: np.ndarray, window_size: int) -> np.ndarray:
@@ -165,8 +165,8 @@ def find_hairpins(np_transcript: np.ndarray, min_window: int, max_window: int, m
     # Finds basepair matches for each distance. The first basepair in the match will be reported as TRUE
     if parallel:
         matches = joblib.Parallel(n_jobs=joblib.cpu_count())(joblib.delayed(find_matches)
-                                  (np_transcript, window_size=window_size)
-                                  for window_size in range(min_window, max_window + 1))
+                                                             (np_transcript, window_size=window_size)
+                                                             for window_size in range(min_window, max_window + 1))
     else:
         matches = [find_matches(np_transcript, window_size=window_size)
                    for window_size in range(min_window, max_window + 1)]
@@ -179,12 +179,21 @@ def find_hairpins(np_transcript: np.ndarray, min_window: int, max_window: int, m
     odd_match_matrix = match_matrix[np.invert(np.flipud(is_even_window)), :]
     max_even_window = max_window if max_window % 2 == 0 else max_window - 1
     max_odd_window = max_window if max_window % 2 != 0 else max_window - 1
-    even_start_position, even_match_length, even_end_position = extract_match_results(even_match_matrix,
-                                                                                      max_even_window,
-                                                                                      min_motif_length=min_motif_length)
-    odd_start_position, odd_match_length, odd_end_position = extract_match_results(odd_match_matrix,
-                                                                                   max_odd_window,
-                                                                                   min_motif_length=min_motif_length)
+    if parallel:
+        (even_start_position, even_match_length, even_end_position), \
+        (odd_start_position, odd_match_length, odd_end_position) = joblib.Parallel(n_jobs=2)(
+            joblib.delayed(extract_match_results)(call[0], call[1], min_motif_length=min_motif_length)
+            for call in ((even_match_matrix, max_even_window), (odd_match_matrix, max_odd_window))
+        )
+    else:
+        even_start_position, even_match_length, even_end_position = \
+            extract_match_results(even_match_matrix,
+                                  max_even_window,
+                                  min_motif_length=min_motif_length)
+        odd_start_position, odd_match_length, odd_end_position = \
+            extract_match_results(odd_match_matrix,
+                                  max_odd_window,
+                                  min_motif_length=min_motif_length)
     start_position = np.concatenate([even_start_position, odd_start_position])
     match_length = np.concatenate([even_match_length, odd_match_length])
     end_position = np.concatenate([even_end_position, odd_end_position])
@@ -202,7 +211,7 @@ class RandomizationResult:
         return self.mean_matched_bases.size
 
     def compare(self, match_result: MatchResult, len_sequence: int, min_window: int,
-                min_motif_length: int, p_crit: float = 0.05):
+                min_motif_length: int, q_crit: float = 0.05):
         # Finds the motif intervals to consider
         length_of_interval = np.subtract.outer(match_result.end_position, match_result.start_position) + 1
         intervals_to_consider = np.nonzero(np.logical_and(self.min_length <= length_of_interval,
@@ -210,9 +219,13 @@ class RandomizationResult:
         interval_indices = np.transpose(intervals_to_consider)
         interval_list = map(lambda x: x, interval_indices)
         n_matched_bases_in_intervals_list = joblib.Parallel(n_jobs=joblib.cpu_count())(joblib.delayed(lambda interval:
-                                                     match_result.count_matched_bases(start_motif=interval[1],
-                                                                                      end_motif=interval[0]))(interval)
-                                                     for interval in interval_list)
+                                                                                                      match_result.count_matched_bases(
+                                                                                                          start_motif=
+                                                                                                          interval[1],
+                                                                                                          end_motif=
+                                                                                                          interval[0]))(
+            interval)
+                                                                                       for interval in interval_list)
         n_matched_bases_in_intervals = np.array(n_matched_bases_in_intervals_list)
         length_of_intervals_to_consider = length_of_interval[intervals_to_consider]
         z_values_for_intervals = (n_matched_bases_in_intervals
@@ -221,22 +234,17 @@ class RandomizationResult:
         # Discards the intervals where the randomizations do not report any variation in the number of base pairings
         z_values_for_intervals[self.std_error_matched_bases[length_of_intervals_to_consider -
                                                             self.min_length] < np.finfo(float).eps] = -np.Inf
-        # Discards the intervals where the
-        p_values_for_intervals = 1 - scipy.stats.norm.cdf(z_values_for_intervals)
-        corrected_p_values_for_intervals = 1 - np.power(1 - p_values_for_intervals,
-                                                        len_sequence / length_of_intervals_to_consider)
-        significant_intervals = np.nonzero(corrected_p_values_for_intervals < p_crit)[0]
-        end_motif, start_motif = interval_indices[significant_intervals, 0], interval_indices[significant_intervals, 1]
+        p_values = 1 - scipy.stats.norm.cdf(z_values_for_intervals)
+        p_values = 1 - np.power(1 - p_values, len_sequence / length_of_intervals_to_consider)
+        end_motif, start_motif = interval_indices[:, 0], interval_indices[:, 1]
         start_nucleotide = match_result.start_position[start_motif]
         end_nucleotide = match_result.end_position[end_motif]
-        p_values = corrected_p_values_for_intervals[significant_intervals]
         p_values_order = np.argsort(p_values)
-
         res = IntervalResult(randomized_result=self)
         # Removes the overlaps, starting with the most significant interval
         # Indecies relative to the array significant_intervals
-        discard = np.zeros(shape=significant_intervals.size, dtype=np.bool_)
-        for i in range(significant_intervals.size):
+        discard = np.zeros(shape=p_values.size, dtype=np.bool_)
+        for i in range(p_values.size):
             this_index = p_values_order[i]
             if discard[this_index]:
                 continue
@@ -246,6 +254,7 @@ class RandomizationResult:
                     n_matched_bases=n_matched_bases_in_intervals[this_index])
             discard[(start_nucleotide >= start_nucleotide[this_index]) *
                     (end_nucleotide <= end_nucleotide[this_index])] = True
+        res.correct(q_crit=q_crit)
         return res
 
 
@@ -262,6 +271,16 @@ class IntervalResult:
         self.end_nucleotide.append(end_nucleotide)
         self.p_value.append(p_value)
         self.n_matched_bases.append(n_matched_bases)
+
+    def correct(self, q_crit):
+        # Benjamini-Yekutieli correction of p-values
+        significant, q_value, _, _ = \
+            statsmodels.stats.multitest.multipletests(pvals=self.p_value, alpha=q_crit, method='fdr_by')
+        self.start_nucleotide = np.array(self.start_nucleotide)[significant]
+        self.end_nucleotide = np.array(self.end_nucleotide)[significant]
+        self.n_matched_bases = np.array(self.n_matched_bases)[significant]
+        self.p_value = np.array(self.p_value)[significant]
+        self.q_value = q_value[significant]
 
     def __len__(self):
         return len(self.start_nucleotide)
@@ -291,7 +310,7 @@ def compute_randomized_structures(transcript: Bio.Seq.Seq, n_randomizations: int
                               for length in range(min_length, max_length + 1)]
         return np.array(matched_base_count)
 
-    seeds = np.random.randint(low=0, high=2**32-1, size=n_randomizations)
+    seeds = np.random.randint(low=0, high=2 ** 32 - 1, size=n_randomizations)
     res = joblib.Parallel(n_jobs=joblib.cpu_count())(joblib.delayed(parallel_wrapper)(seeds[i])
                                                      for i in range(n_randomizations))
     # res = [parallel_wrapper(seeds[i]) for i in range(n_randomizations)]
@@ -300,7 +319,7 @@ def compute_randomized_structures(transcript: Bio.Seq.Seq, n_randomizations: int
 
 
 def predict_RNA_genes(sequence, n_randomizations: int, min_window: int, max_window: int, min_length: int,
-                      max_length: int, p_crit: float,
+                      max_length: int, q_crit: float,
                       min_motif_length) \
         -> IntervalResult:
     sequence = sequence.upper()
@@ -313,7 +332,7 @@ def predict_RNA_genes(sequence, n_randomizations: int, min_window: int, max_wind
     np_transcript = np.array(transcript, dtype=np.string_)
     actual_results = find_hairpins(np_transcript, min_window, max_window, min_motif_length)
 
-    return randomized_results.compare(actual_results, p_crit=p_crit, len_sequence=len(sequence), min_window=min_window,
+    return randomized_results.compare(actual_results, q_crit=q_crit, len_sequence=len(sequence), min_window=min_window,
                                       min_motif_length=min_motif_length)
 
 
@@ -327,10 +346,10 @@ def write_results(results: IntervalResult, chrom: str, chromStart: int, res_pref
         for i in range(len(results)):
             this_chromStart = results.start_nucleotide[i] + chromStart
             this_chromEnd = results.end_nucleotide[i] + chromStart
-            this_p_value = results.p_value[i]
+            this_q_value = results.q_value[i]
             this_n_matched_bases = results.n_matched_bases[i]
-            bed_line = '''{0}\t{1}\t{2}\t"p-value={3:.1e}"\n'''.format(chrom, this_chromStart, this_chromEnd,
-                                                              this_p_value)
+            bed_line = '''{0}\t{1}\t{2}\t"q-value={3:.1e}"\n'''.format(chrom, this_chromStart, this_chromEnd,
+                                                                       this_q_value)
             f.write(bed_line)
     rand_name = res_prefix + '_randomized_results' + '.txt' if res_prefix != '' else 'randomized_results.txt'
     with open(rand_name, mode='w') as f:
@@ -343,10 +362,10 @@ def write_results(results: IntervalResult, chrom: str, chromStart: int, res_pref
             f.write(rand_line)
     plot_name = res_prefix + '_plot' + '.pdf' if res_prefix != '' else 'plot.pdf'
     plt.figure()
-    plt.errorbar(x=range(results.randomized_result.min_length, results.randomized_result.max_length+1),
+    plt.errorbar(x=range(results.randomized_result.min_length, results.randomized_result.max_length + 1),
                  y=results.randomized_result.mean_matched_bases,
                  yerr=results.randomized_result.std_error_matched_bases, label='Randomized sequences')
-    plt.plot(np.array(results.end_nucleotide) - np.array(results.start_nucleotide),
+    plt.plot(results.end_nucleotide - results.start_nucleotide,
              results.n_matched_bases, 'or', label='Real intervals reported')
     plt.xlabel('Length of interval')
     plt.ylabel('Number of matched bases in interval')
@@ -369,9 +388,10 @@ def write_results(results: IntervalResult, chrom: str, chromStart: int, res_pref
 @click.option('--chrom', default='chr', help='String representation of chromosome name (such as chr10)',
               show_default=True)
 @click.option('--chromStart', default=0, help='Start position of the sequence at the chromosome', show_default=True)
-@click.option('--p_crit', default=0.05, help='Critical p-value for the results', show_default=True)
+@click.option('--q_crit', default=0.05, help='Critical Benjamini–Yekutieli corrected false discovery '
+                                             'rate for the results', show_default=True)
 @click.option('--res_prefix', default='', help='Prefix for the output files', show_default=True)
-def main(infile, min_window=4, n_randomizations=50, max_window=100, min_length=20, max_length=100, p_crit=0.05,
+def main(infile, min_window=4, n_randomizations=50, max_window=100, min_length=20, max_length=100, q_crit=0.05,
          min_motif_length=4,
          chrom='chr', chromstart=0, res_prefix=''):
     """
@@ -380,7 +400,7 @@ def main(infile, min_window=4, n_randomizations=50, max_window=100, min_length=2
     sequence = Bio.SeqIO.read(infile, 'fasta', alphabet=Bio.Alphabet.generic_dna).seq
     results = predict_RNA_genes(sequence, n_randomizations=n_randomizations, min_window=min_window,
                                 max_window=max_window, min_length=min_length,
-                                max_length=max_length, p_crit=p_crit, min_motif_length=min_motif_length)
+                                max_length=max_length, q_crit=q_crit, min_motif_length=min_motif_length)
     write_results(results=results, chrom=chrom, chromStart=chromstart, res_prefix=res_prefix)
 
 
