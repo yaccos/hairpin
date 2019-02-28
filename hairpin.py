@@ -252,8 +252,8 @@ class RandomizationResult:
             res.add(start_nucleotide=start_nucleotide[this_index], end_nucleotide=end_nucleotide[this_index],
                     p_value=p_values[this_index],
                     n_matched_bases=n_matched_bases_in_intervals[this_index])
-            discard[(start_nucleotide >= start_nucleotide[this_index]) *
-                    (end_nucleotide <= end_nucleotide[this_index])] = True
+            discard[(end_nucleotide >= start_nucleotide[this_index]) *
+                    (start_nucleotide <= end_nucleotide[this_index])] = True
         res.correct(q_crit=q_crit)
         return res
 
@@ -377,14 +377,19 @@ def write_results(results: IntervalResult, chrom: str, chromStart: int, res_pref
 @click.command()
 @click.argument(u'infile')
 @click.option('--n_randomizations', default=50, help="Number of randomizations used to assess the significance of the"
-                                                     " results", show_default=True)
-@click.option('--min_window', default=4, help='Minimal window searching for matching nucleotides', show_default=True)
-@click.option('--max_window', default=100, help='Maximal window searching for matching nucleotides', show_default=True)
-@click.option('--min_length', default=20, help='Minimal length of reported RNA coding regions', show_default=True)
-@click.option('--max_length', default=100, help='Maximal length of reported RNA coding regions', show_default=True)
+                                                     " results, corresponds to n_rand in the article",
+              show_default=True)
+@click.option('--min_window', default=4, help='Minimal window searching for matching nucleotides, corresponds to '
+                                              'd_min in the article', show_default=True)
+@click.option('--max_window', default=100, help='Maximal window searching for matching nucleotides, '
+                                                'corresponds to d_max in the article', show_default=True)
+@click.option('--min_length', default=20, help='Minimal length of reported RNA coding regions,'
+                                               ' corresponds to r_min in the article', show_default=True)
+@click.option('--max_length', default=100, help='Maximal length of reported RNA coding regions,'
+                                                'corresponds to r_max in the article', show_default=True)
 @click.option('--min_motif_length', default=4,
               help='The minimum number of consecutive base parings necessary to take such a motif into '
-                   'consideration', show_default=True)
+                   'consideration, corresponds to l_min in the article', show_default=True)
 @click.option('--chrom', default='chr', help='String representation of chromosome name (such as chr10)',
               show_default=True)
 @click.option('--chromStart', default=0, help='Start position of the sequence at the chromosome', show_default=True)
