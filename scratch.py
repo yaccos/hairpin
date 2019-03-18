@@ -52,6 +52,7 @@ A = np.array([1, 2, 3])
 B = np.array([3, 4, 5])
 np.subtract.outer(A, B)
 
+
 mymatrix = np.array([[11, 12, 13],
                       [21, 22, 23],
                       [31, 32, 33]])

@@ -218,12 +218,13 @@ class RandomizationResult:
                                                           length_of_interval <= self.max_length))
         interval_indices = np.transpose(intervals_to_consider)
         interval_list = map(lambda x: x, interval_indices)
-        n_matched_bases_in_intervals_list = joblib.Parallel(n_jobs=joblib.cpu_count())(joblib.delayed(lambda interval:
-                                                                                                      match_result.count_matched_bases(
-                                                                                                          start_motif=
-                                                                                                          interval[1],
-                                                                                                          end_motif=
-                                                                                                          interval[0]))(
+        n_matched_bases_in_intervals_list = joblib.Parallel(n_jobs=joblib.cpu_count())(joblib.delayed(
+            lambda interval:
+            match_result.count_matched_bases(
+                start_motif=
+                interval[1],
+                end_motif=
+                interval[0]))(
             interval)
                                                                                        for interval in interval_list)
         n_matched_bases_in_intervals = np.array(n_matched_bases_in_intervals_list)
@@ -366,10 +367,10 @@ def write_results(results: IntervalResult, chrom: str, chromStart: int, res_pref
                  y=results.randomized_result.mean_matched_bases,
                  yerr=results.randomized_result.std_error_matched_bases, label='Randomized sequences')
     plt.plot(results.end_nucleotide - results.start_nucleotide,
-             results.n_matched_bases, 'or', label='Real intervals reported')
-    plt.xlabel('Length of interval')
-    plt.ylabel('Number of matched bases in interval')
-    plt.title('Comparison of the significant intervals found to the randomized results')
+             results.n_matched_bases, 'or', label='Real regions reported')
+    plt.xlabel('Length of region')
+    plt.ylabel('Base-pairing count in region')
+    plt.title('Comparison of the significant regions found to the randomized results')
     plt.legend(loc='lower right')
     plt.savefig(plot_name, format='pdf')
 
