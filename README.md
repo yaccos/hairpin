@@ -24,6 +24,10 @@ The arguments are described upon calling:
 python3 hairpin.py --help
 ```
 
+Also, you *can* use the functions and classes provided by the software as part of a custom script as done in the
+examples. Note though that the internal API is poorly documented, so issues and pull requests regarding its documentation
+are welcome.
+
 ## More about the arguments
 Except the input file, all options have default values. 
 The input must be in `fasta`-format, 
@@ -53,3 +57,14 @@ randomized sequences
  reported significant intervals. The blue line correspond to the mean number of matched bases for the
   randomizations, while the error bar denotes its standard deviations. Each red dot corresponds to a
   significant interval found.
+  
+# Disclaimer
+Do not expect the program to yield any meaningful biological results. As the referenced paper states, 
+the biological signal is typically too small to be separated from random noise. You are welcome to prove the author
+wrong though.
+
+
+# References
+Hairpin: a tool for predicting structural non-coding RNA genes _ab initio_
+Jakob Peder Pettersen
+bioRxiv 640862; doi: https://doi.org/10.1101/640862
